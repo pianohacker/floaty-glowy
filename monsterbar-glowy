@@ -1,7 +1,0 @@
-#!/usr/bin/env python3
-
-from gi.Repository import Gtk
-
-win = Gtk.Window.new()
-
-Gtk.main()
