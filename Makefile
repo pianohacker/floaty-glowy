@@ -1,5 +1,5 @@
 CFLAGS = -Wall -std=gnu99
-LDFLAGS = -lm -lxcb -lcairo
+LDFLAGS = -lm -lxcb -lxcb-util -lcairo
 
 -include config.mk
 
