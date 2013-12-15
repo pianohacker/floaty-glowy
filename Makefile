@@ -1,5 +1,5 @@
-CFLAGS = -Wall -std=gnu99
-LDFLAGS = -lm -lxcb -lxcb-util -lcairo
+CFLAGS = -Wall -std=gnu99 $(shell pkg-config --cflags cairo xcb xcb-util)
+LDFLAGS = -lm $(shell pkg-config --libs cairo xcb xcb-util)
 
 -include config.mk
 
@@ -12,6 +12,7 @@ endif
 all: build/monsterbar
 
 build:
+	echo $(CFLAGS)
 	@mkdir -p build
 
 build/%.o: src/%.c | build

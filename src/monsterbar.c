@@ -1,17 +1,68 @@
+#include <cairo.h>
+#include <cairo-xcb.h>
+#include <errno.h>
 #include <stdarg.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
 #include <xcb/xcb.h>
 #include <xcb/xcb_event.h>
 
-#define FG_DEBUG(format, ...) _fg_debug(__FILE__, __LINE__, format, ##__VA_ARGS__)
-#define FG_FAIL(format, ...) { fprintf(stderr, "monsterbar: " format "\n", ##__VA_ARGS__); exit(EXIT_FAILURE); }
-#define X_CHECKED(code) { xcb_generic_error_t *error; xcb_void_cookie_t cookie = code; if ((error = xcb_request_check(c, cookie))) FG_FAIL("X11 request at %s:%d failed with %s", __FILE__, __LINE__, xcb_event_get_error_label(error->error_code)); }
+#define MB_BARHEIGHT 3
+#define MB_WINDOWHEIGHT 6
+#define MB_INDICATORWIDTH 10
+#define MB_INDICATORSPACE 4
 
-void _fg_debug(char *filename, int line, char *format, ...) {
-	va_list args;
-	va_start(args, format);
-	va_end(args);
+#define FG_DEBUG(format, ...) fprintf(stderr, "monsterbar(%s:%d): " format "\n", __FILE__, __LINE__, ##__VA_ARGS__)
+#define FG_FAIL(format, ...) { fprintf(stderr, "monsterbar: " format "\n", ##__VA_ARGS__); exit(EXIT_FAILURE); }
+#define X_CHECKED(code) { xcb_generic_error_t *error; xcb_void_cookie_t cookie = code; if ((error = xcb_request_check(mb.c, cookie))) FG_FAIL("X11 request at %s:%d failed with %s", __FILE__, __LINE__, xcb_event_get_error_label(error->error_code)); }
+
+struct {
+	struct {
+		bool seen;
+		int n_windows;
+		int mode;
+		bool active;
+		bool urgent;
+	} desktops[64];
+
+	xcb_connection_t *c;
+	xcb_screen_t *screen;
+	xcb_visualtype_t *argb_visual;
+
+	xcb_window_t window;
+	cairo_surface_t *surface;
+} mb;
+
+void mb_draw() {
+	int width = mb.screen->width_in_pixels;
+	cairo_t *cr = cairo_create(mb.surface);
+
+	cairo_set_operator(cr, CAIRO_OPERATOR_CLEAR);
+	cairo_paint(cr);
+	cairo_set_operator(cr, CAIRO_OPERATOR_OVER);
+
+	cairo_rectangle(cr, 0, 0, width, MB_BARHEIGHT);
+	cairo_set_source_rgba(cr, 1, 0, 0, .5);
+	cairo_fill(cr);
+
+	cairo_destroy(cr);
+
+	cairo_surface_flush(mb.surface);
+	xcb_flush(mb.c);
+}
+
+void mb_handle_event(xcb_generic_event_t *event) {
+	switch (event->response_type & XCB_EVENT_RESPONSE_TYPE_MASK) {
+		case XCB_EXPOSE:
+			mb_draw();
+			break;
+		default:
+			FG_DEBUG("unhandled event %s", xcb_event_get_label(event->response_type));
+			break;
+	}
 }
 
 xcb_screen_t* x_get_screen(xcb_connection_t *c, int i) {
@@ -29,7 +80,7 @@ xcb_screen_t* x_get_screen(xcb_connection_t *c, int i) {
 	FG_FAIL("invalid screen %d", i);
 }
 
-xcb_visualid_t x_get_visual(xcb_screen_t *screen, int depth) {
+xcb_visualtype_t* x_get_visual(xcb_screen_t *screen, int depth) {
 	xcb_depth_iterator_t depth_iter;
 	xcb_depth_t *depth_info = NULL;
 
@@ -43,41 +94,76 @@ xcb_visualid_t x_get_visual(xcb_screen_t *screen, int depth) {
 
 	if (!depth_info) FG_FAIL("could not find visual of depth %d", depth);
 
-	return xcb_depth_visuals(depth_info)[0].visual_id;
+	return xcb_depth_visuals(depth_info);
 }
 
 xcb_colormap_t x_get_colormap(xcb_connection_t *c, xcb_screen_t *screen, xcb_visualid_t visual) {
 	xcb_colormap_t colormap = xcb_generate_id(c);
-	X_CHECKED(xcb_create_colormap_checked(c, XCB_COLORMAP_ALLOC_NONE, colormap, screen->root, visual));
+	X_CHECKED(xcb_create_colormap_checked(mb.c, XCB_COLORMAP_ALLOC_NONE, colormap, screen->root, visual));
 
 	return colormap;
 }
 
 int main() {
 	int screen_nbr;
-	xcb_connection_t *c = xcb_connect(NULL, &screen_nbr);
-	xcb_screen_t *screen = x_get_screen(c, screen_nbr);
-	xcb_visualid_t argb_visual = x_get_visual(screen, 32);
-	xcb_colormap_t argb_colormap = x_get_colormap(c, screen, argb_visual);
+	mb.c = xcb_connect(NULL, &screen_nbr);
+	mb.screen = x_get_screen(mb.c, screen_nbr);
+	mb.argb_visual = x_get_visual(mb.screen, 32);
+	xcb_colormap_t argb_colormap = x_get_colormap(mb.c, mb.screen, mb.argb_visual->visual_id);
 
-	xcb_window_t window = xcb_generate_id(c);
-	uint32_t set_attrs = XCB_CW_BACK_PIXEL | XCB_CW_BORDER_PIXEL | XCB_CW_OVERRIDE_REDIRECT | XCB_CW_COLORMAP;
-	uint32_t attrs[4] = { 0, 0, 1, argb_colormap };
-	X_CHECKED(xcb_create_window_checked(c,
+	mb.window = xcb_generate_id(mb.c);
+	uint32_t set_attrs = XCB_CW_BACK_PIXEL | XCB_CW_BORDER_PIXEL | XCB_CW_OVERRIDE_REDIRECT | XCB_CW_EVENT_MASK | XCB_CW_COLORMAP;
+	uint32_t attrs[] = { 0, 0, 1, XCB_EVENT_MASK_EXPOSURE, argb_colormap };
+	X_CHECKED(xcb_create_window_checked(mb.c,
 		32,
-		window,
-		screen->root,
+		mb.window,
+		mb.screen->root,
 		0, 0,
-		screen->width_in_pixels, 6,
+		mb.screen->width_in_pixels, 6,
 		0,
 		XCB_WINDOW_CLASS_INPUT_OUTPUT,
-		argb_visual,
+		mb.argb_visual->visual_id,
 		set_attrs, attrs
 	));
-	X_CHECKED(xcb_map_window_checked(c, window));
-	xcb_flush(c);
+	X_CHECKED(xcb_map_window_checked(mb.c, mb.window));
 
-	getc(stdin);
+	mb.surface = cairo_xcb_surface_create(mb.c, mb.window, mb.argb_visual, mb.screen->width_in_pixels, 6);
+
+	int xcb_fd = xcb_get_file_descriptor(mb.c);
+	fd_set rfds;
+	xcb_generic_event_t *event;
+
+	while (1) {
+		FD_ZERO(&rfds);
+		FD_SET(0, &rfds);
+		FD_SET(xcb_fd, &rfds);
+
+		while ((event = xcb_poll_for_queued_event(mb.c))) {
+			mb_handle_event(event);
+		}
+
+		if (select(xcb_fd + 1, &rfds, NULL, NULL, NULL) == -1) FG_FAIL("select failed: %s", strerror(errno));
+
+		if (FD_ISSET(0, &rfds)) {
+			int i, n_windows, mode, urgent, active;
+
+			if (fscanf(stdin, "%d:%d:%d:%d:%d", &i, &n_windows, &mode, &urgent, &active) == EOF) return EXIT_SUCCESS;
+			if (i >= 64) continue;
+			mb.desktops[i].seen = true;
+			mb.desktops[i].n_windows = n_windows;
+			mb.desktops[i].mode = mode;
+			mb.desktops[i].urgent = urgent;
+			mb.desktops[i].active = active;
+
+			mb_draw();
+		} else {
+			while ((event = xcb_poll_for_event(mb.c))) {
+				mb_handle_event(event);
+			}
+
+			if (xcb_connection_has_error(mb.c)) return EXIT_SUCCESS;
+		}
+	}
 
 	return EXIT_SUCCESS;
 }
