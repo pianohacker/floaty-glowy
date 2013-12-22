@@ -12,8 +12,8 @@
 
 #define MB_BARHEIGHT 3
 #define MB_WINDOWHEIGHT 6
-#define MB_INDICATORWIDTH 10
-#define MB_INDICATORSPACE 4
+#define MB_INDICATORWIDTH 20
+#define MB_INDICATORSPACE 12
 
 #define FG_DEBUG(format, ...) fprintf(stderr, "monsterbar(%s:%d): " format "\n", __FILE__, __LINE__, ##__VA_ARGS__)
 #define FG_FAIL(format, ...) { fprintf(stderr, "monsterbar: " format "\n", ##__VA_ARGS__); exit(EXIT_FAILURE); }
@@ -45,8 +45,22 @@ void mb_draw() {
 	cairo_set_operator(cr, CAIRO_OPERATOR_OVER);
 
 	cairo_rectangle(cr, 0, 0, width, MB_BARHEIGHT);
-	cairo_set_source_rgba(cr, 1, 0, 0, .5);
+	cairo_set_source_rgba(cr, 0, 0, 0, .5);
 	cairo_fill(cr);
+
+	for (int i = 0; i < 64 && mb.desktops[i].seen; i++) {
+		cairo_rectangle(cr, MB_INDICATORSPACE + (MB_INDICATORWIDTH + MB_INDICATORSPACE) * i, 0, MB_INDICATORWIDTH, MB_WINDOWHEIGHT);
+		if (mb.desktops[i].active) {
+			cairo_set_source_rgba(cr, .815, .212, .012, .9);
+		} else if (mb.desktops[i].urgent) {
+			cairo_set_source_rgba(cr, .451, .651, .941, .9);
+		} else if (mb.desktops[i].n_windows) {
+			cairo_set_source_rgba(cr, .3, .3, .3, .8);
+		} else {
+			cairo_set_source_rgba(cr, 0, 0, 0, 0);
+		}
+		cairo_fill(cr);
+	}
 
 	cairo_destroy(cr);
 
@@ -147,13 +161,18 @@ int main() {
 		if (FD_ISSET(0, &rfds)) {
 			int i, n_windows, mode, urgent, active;
 
-			if (fscanf(stdin, "%d:%d:%d:%d:%d", &i, &n_windows, &mode, &urgent, &active) == EOF) return EXIT_SUCCESS;
-			if (i >= 64) continue;
+			int results = fscanf(stdin, "%d:%d:%d:%d:%d", &i, &n_windows, &mode, &urgent, &active);
+			if (results == EOF) return EXIT_SUCCESS;
+			if (results != 5 || i < 0 || i >= 64) {
+				fgetc(stdin);
+				continue;
+			}
 			mb.desktops[i].seen = true;
 			mb.desktops[i].n_windows = n_windows;
 			mb.desktops[i].mode = mode;
 			mb.desktops[i].urgent = urgent;
 			mb.desktops[i].active = active;
+			fprintf(stderr, "i:%d n:%d m:%d u:%d a:%d\n", i, n_windows, mode, active, urgent);
 
 			mb_draw();
 		} else {
