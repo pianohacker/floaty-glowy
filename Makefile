@@ -1,4 +1,4 @@
-CFLAGS = -Wall -std=gnu99 $(shell pkg-config --cflags cairo xcb xcb-util)
+CFLAGS = -Wall -std=gnu99 -D_POSIX_C_SOURCE=200809L $(shell pkg-config --cflags cairo xcb xcb-util)
 LDFLAGS = -lm $(shell pkg-config --libs cairo xcb xcb-util)
 
 -include config.mk

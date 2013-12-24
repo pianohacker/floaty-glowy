@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/select.h>
 #include <unistd.h>
 #include <xcb/xcb.h>
 #include <xcb/xcb_event.h>
@@ -45,7 +46,7 @@ void mb_draw() {
 	cairo_set_operator(cr, CAIRO_OPERATOR_OVER);
 
 	cairo_rectangle(cr, 0, 0, width, MB_BARHEIGHT);
-	cairo_set_source_rgba(cr, 0, 0, 0, .5);
+	cairo_set_source_rgba(cr, 1, 1, 1, .8);
 	cairo_fill(cr);
 
 	for (int i = 0; i < 64 && mb.desktops[i].seen; i++) {
@@ -139,6 +140,7 @@ int main() {
 		mb.argb_visual->visual_id,
 		set_attrs, attrs
 	));
+	X_CHECKED(xcb_configure_window_checked(mb.c, mb.window, XCB_CONFIG_WINDOW_STACK_MODE, (uint32_t[]) {XCB_STACK_MODE_ABOVE}));
 	X_CHECKED(xcb_map_window_checked(mb.c, mb.window));
 
 	mb.surface = cairo_xcb_surface_create(mb.c, mb.window, mb.argb_visual, mb.screen->width_in_pixels, 6);
@@ -161,18 +163,22 @@ int main() {
 		if (FD_ISSET(0, &rfds)) {
 			int i, n_windows, mode, urgent, active;
 
-			int results = fscanf(stdin, "%d:%d:%d:%d:%d", &i, &n_windows, &mode, &urgent, &active);
-			if (results == EOF) return EXIT_SUCCESS;
-			if (results != 5 || i < 0 || i >= 64) {
-				fgetc(stdin);
-				continue;
+			char *line = NULL;
+			size_t len;
+			if (getline(&line, &len, stdin) == -1) return EXIT_SUCCESS;
+
+			int num_read = 0;
+			while (sscanf(line, "%d:%d:%d:%d:%d%n", &i, &n_windows, &mode, &active, &urgent, &num_read) == 5) {
+				if (i < 0 || i >= 64) continue;
+
+				mb.desktops[i].seen = true;
+				mb.desktops[i].n_windows = n_windows;
+				mb.desktops[i].mode = mode;
+				mb.desktops[i].urgent = urgent;
+				mb.desktops[i].active = active;
+
+				line += num_read;
 			}
-			mb.desktops[i].seen = true;
-			mb.desktops[i].n_windows = n_windows;
-			mb.desktops[i].mode = mode;
-			mb.desktops[i].urgent = urgent;
-			mb.desktops[i].active = active;
-			fprintf(stderr, "i:%d n:%d m:%d u:%d a:%d\n", i, n_windows, mode, active, urgent);
 
 			mb_draw();
 		} else {
