@@ -20,6 +20,23 @@
 #define FG_FAIL(format, ...) { fprintf(stderr, "monsterbar: " format "\n", ##__VA_ARGS__); exit(EXIT_FAILURE); }
 #define X_CHECKED(code) { xcb_generic_error_t *error; xcb_void_cookie_t cookie = code; if ((error = xcb_request_check(mb.c, cookie))) FG_FAIL("X11 request at %s:%d failed with %s", __FILE__, __LINE__, xcb_event_get_error_label(error->error_code)); }
 
+char *ATOM_NAMES[] = {
+	"_NET_WM_STATE",
+	"_NET_WM_STATE_ABOVE",
+	"_NET_WM_WINDOW_TYPE",
+	"_NET_WM_WINDOW_TYPE_DOCK",
+};
+
+enum {
+	_NET_WM_STATE,
+	_NET_WM_STATE_ABOVE,
+	_NET_WM_WINDOW_TYPE,
+	_NET_WM_WINDOW_TYPE_DOCK,
+	ATOM_COUNT
+};
+
+xcb_atom_t ATOMS[ATOM_COUNT];
+
 struct {
 	struct {
 		bool seen;
@@ -36,49 +53,6 @@ struct {
 	xcb_window_t window;
 	cairo_surface_t *surface;
 } mb;
-
-void mb_draw() {
-	int width = mb.screen->width_in_pixels;
-	cairo_t *cr = cairo_create(mb.surface);
-
-	cairo_set_operator(cr, CAIRO_OPERATOR_CLEAR);
-	cairo_paint(cr);
-	cairo_set_operator(cr, CAIRO_OPERATOR_OVER);
-
-	cairo_rectangle(cr, 0, 0, width, MB_BARHEIGHT);
-	cairo_set_source_rgba(cr, 1, 1, 1, .8);
-	cairo_fill(cr);
-
-	for (int i = 0; i < 64 && mb.desktops[i].seen; i++) {
-		cairo_rectangle(cr, MB_INDICATORSPACE + (MB_INDICATORWIDTH + MB_INDICATORSPACE) * i, 0, MB_INDICATORWIDTH, MB_WINDOWHEIGHT);
-		if (mb.desktops[i].active) {
-			cairo_set_source_rgba(cr, .815, .212, .012, .9);
-		} else if (mb.desktops[i].urgent) {
-			cairo_set_source_rgba(cr, .451, .651, .941, .9);
-		} else if (mb.desktops[i].n_windows) {
-			cairo_set_source_rgba(cr, .3, .3, .3, .8);
-		} else {
-			cairo_set_source_rgba(cr, 0, 0, 0, 0);
-		}
-		cairo_fill(cr);
-	}
-
-	cairo_destroy(cr);
-
-	cairo_surface_flush(mb.surface);
-	xcb_flush(mb.c);
-}
-
-void mb_handle_event(xcb_generic_event_t *event) {
-	switch (event->response_type & XCB_EVENT_RESPONSE_TYPE_MASK) {
-		case XCB_EXPOSE:
-			mb_draw();
-			break;
-		default:
-			FG_DEBUG("unhandled event %s", xcb_event_get_label(event->response_type));
-			break;
-	}
-}
 
 xcb_screen_t* x_get_screen(xcb_connection_t *c, int i) {
 	xcb_screen_iterator_t iter;
@@ -119,6 +93,76 @@ xcb_colormap_t x_get_colormap(xcb_connection_t *c, xcb_screen_t *screen, xcb_vis
 	return colormap;
 }
 
+static void x_get_atoms(xcb_connection_t *c, char **names, xcb_atom_t *atoms, unsigned int count) {
+    xcb_intern_atom_cookie_t cookies[count];
+    xcb_intern_atom_reply_t  *reply;
+
+    for (unsigned int i = 0; i < count; i++) cookies[i] = xcb_intern_atom(c, 0, strlen(names[i]), names[i]);
+    for (unsigned int i = 0; i < count; i++) {
+        reply = xcb_intern_atom_reply(c, cookies[i], NULL); /* TODO: Handle error */
+        if (reply) {
+            atoms[i] = reply->atom; free(reply);
+        } else {
+			FG_FAIL("Failed to register atom %s", names[i]);
+		}
+    }
+}
+
+void x_set_net_wm_window_type(xcb_connection_t *c, xcb_window_t win, xcb_atom_t state) {
+	X_CHECKED(xcb_change_property_checked(c, XCB_PROP_MODE_REPLACE, win, ATOMS[_NET_WM_WINDOW_TYPE], XCB_ATOM_ATOM, 32, 1, &ATOMS[_NET_WM_WINDOW_TYPE_DOCK]));
+}
+
+void x_raise_window(xcb_connection_t *c, xcb_window_t win) {
+	X_CHECKED(xcb_configure_window_checked(c, win, XCB_CONFIG_WINDOW_STACK_MODE, (uint32_t[]) {XCB_STACK_MODE_ABOVE}));
+	xcb_flush(c);
+}
+
+void mb_draw() {
+	int width = mb.screen->width_in_pixels;
+	cairo_t *cr = cairo_create(mb.surface);
+
+	cairo_set_operator(cr, CAIRO_OPERATOR_CLEAR);
+	cairo_paint(cr);
+	cairo_set_operator(cr, CAIRO_OPERATOR_OVER);
+
+	cairo_rectangle(cr, 0, 0, width, MB_BARHEIGHT);
+	cairo_set_source_rgba(cr, 1, 1, 1, .8);
+	cairo_fill(cr);
+
+	for (int i = 0; i < 64 && mb.desktops[i].seen; i++) {
+		cairo_rectangle(cr, MB_INDICATORSPACE + (MB_INDICATORWIDTH + MB_INDICATORSPACE) * i, 0, MB_INDICATORWIDTH, MB_WINDOWHEIGHT);
+		if (mb.desktops[i].active) {
+			cairo_set_source_rgba(cr, .815, .212, .012, .9);
+		} else if (mb.desktops[i].urgent) {
+			cairo_set_source_rgba(cr, .451, .651, .941, .9);
+		} else if (mb.desktops[i].n_windows) {
+			cairo_set_source_rgba(cr, .3, .3, .3, .8);
+		} else {
+			cairo_set_source_rgba(cr, 0, 0, 0, 0);
+		}
+		cairo_fill(cr);
+	}
+
+	cairo_destroy(cr);
+
+	cairo_surface_flush(mb.surface);
+	xcb_flush(mb.c);
+}
+
+void mb_handle_event(xcb_generic_event_t *event) {
+	switch (event->response_type & XCB_EVENT_RESPONSE_TYPE_MASK) {
+		case XCB_EXPOSE:
+			mb_draw();
+			break;
+		case XCB_VISIBILITY_NOTIFY:
+			x_raise_window(mb.c, mb.window);
+			break;
+		default:
+			FG_DEBUG("unhandled event %s", xcb_event_get_label(event->response_type));
+			break;
+	}
+}
+
 int main() {
 	int screen_nbr;
 	mb.c = xcb_connect(NULL, &screen_nbr);
@@ -126,9 +170,11 @@ int main() {
 	mb.argb_visual = x_get_visual(mb.screen, 32);
 	xcb_colormap_t argb_colormap = x_get_colormap(mb.c, mb.screen, mb.argb_visual->visual_id);
 
+	x_get_atoms(mb.c, ATOM_NAMES, ATOMS, ATOM_COUNT);
+
 	mb.window = xcb_generate_id(mb.c);
 	uint32_t set_attrs = XCB_CW_BACK_PIXEL | XCB_CW_BORDER_PIXEL | XCB_CW_OVERRIDE_REDIRECT | XCB_CW_EVENT_MASK | XCB_CW_COLORMAP;
-	uint32_t attrs[] = { 0, 0, 1, XCB_EVENT_MASK_EXPOSURE, argb_colormap };
+	uint32_t attrs[] = { 0, 0, 0, XCB_EVENT_MASK_EXPOSURE | XCB_EVENT_MASK_VISIBILITY_CHANGE, argb_colormap };
 	X_CHECKED(xcb_create_window_checked(mb.c,
 		32,
 		mb.window,
@@ -140,7 +186,7 @@ int main() {
 		mb.argb_visual->visual_id,
 		set_attrs, attrs
 	));
-	X_CHECKED(xcb_configure_window_checked(mb.c, mb.window, XCB_CONFIG_WINDOW_STACK_MODE, (uint32_t[]) {XCB_STACK_MODE_ABOVE}));
+	x_set_net_wm_window_type(mb.c, mb.window, ATOMS[_NET_WM_WINDOW_TYPE_DOCK]);
 	X_CHECKED(xcb_map_window_checked(mb.c, mb.window));
 
 	mb.surface = cairo_xcb_surface_create(mb.c, mb.window, mb.argb_visual, mb.screen->width_in_pixels, 6);
