@@ -11,31 +11,12 @@
 #include <xcb/xcb.h>
 #include <xcb/xcb_event.h>
 
+#include "util.h"
+
 #define MB_BARHEIGHT 3
 #define MB_WINDOWHEIGHT 6
 #define MB_INDICATORWIDTH 20
 #define MB_INDICATORSPACE 12
-
-#define FG_DEBUG(format, ...) fprintf(stderr, "monsterbar(%s:%d): " format "\n", __FILE__, __LINE__, ##__VA_ARGS__)
-#define FG_FAIL(format, ...) { fprintf(stderr, "monsterbar: " format "\n", ##__VA_ARGS__); exit(EXIT_FAILURE); }
-#define X_CHECKED(code) { xcb_generic_error_t *error; xcb_void_cookie_t cookie = code; if ((error = xcb_request_check(mb.c, cookie))) FG_FAIL("X11 request at %s:%d failed with %s", __FILE__, __LINE__, xcb_event_get_error_label(error->error_code)); }
-
-char *ATOM_NAMES[] = {
-	"_NET_WM_STATE",
-	"_NET_WM_STATE_ABOVE",
-	"_NET_WM_WINDOW_TYPE",
-	"_NET_WM_WINDOW_TYPE_DOCK",
-};
-
-enum {
-	_NET_WM_STATE,
-	_NET_WM_STATE_ABOVE,
-	_NET_WM_WINDOW_TYPE,
-	_NET_WM_WINDOW_TYPE_DOCK,
-	ATOM_COUNT
-};
-
-xcb_atom_t ATOMS[ATOM_COUNT];
 
 struct {
 	struct {
@@ -53,69 +34,6 @@ struct {
 	xcb_window_t window;
 	cairo_surface_t *surface;
 } mb;
-
-xcb_screen_t* x_get_screen(xcb_connection_t *c, int i) {
-	xcb_screen_iterator_t iter;
-
-	/* Get the screen #screen_nbr */
-	iter = xcb_setup_roots_iterator(xcb_get_setup(c));
-	for (; iter.rem; --i, xcb_screen_next(&iter)) {
-		if (i == 0) {
-			return iter.data;
-			break;
-		}
-	}
-
-	FG_FAIL("invalid screen %d", i);
-}
-
-xcb_visualtype_t* x_get_visual(xcb_screen_t *screen, int depth) {
-	xcb_depth_iterator_t depth_iter;
-	xcb_depth_t *depth_info = NULL;
-
-	depth_iter = xcb_screen_allowed_depths_iterator(screen);
-	for (; depth_iter.rem; xcb_depth_next(&depth_iter)) {
-		if (depth_iter.data->depth == depth) {
-			depth_info = depth_iter.data;
-			break;
-		}
-	}
-
-	if (!depth_info) FG_FAIL("could not find visual of depth %d", depth);
-
-	return xcb_depth_visuals(depth_info);
-}
-
-xcb_colormap_t x_get_colormap(xcb_connection_t *c, xcb_screen_t *screen, xcb_visualid_t visual) {
-	xcb_colormap_t colormap = xcb_generate_id(c);
-	X_CHECKED(xcb_create_colormap_checked(mb.c, XCB_COLORMAP_ALLOC_NONE, colormap, screen->root, visual));
-
-	return colormap;
-}
-
-static void x_get_atoms(xcb_connection_t *c, char **names, xcb_atom_t *atoms, unsigned int count) {
-    xcb_intern_atom_cookie_t cookies[count];
-    xcb_intern_atom_reply_t  *reply;
-
-    for (unsigned int i = 0; i < count; i++) cookies[i] = xcb_intern_atom(c, 0, strlen(names[i]), names[i]);
-    for (unsigned int i = 0; i < count; i++) {
-        reply = xcb_intern_atom_reply(c, cookies[i], NULL); /* TODO: Handle error */
-        if (reply) {
-            atoms[i] = reply->atom; free(reply);
-        } else {
-			FG_FAIL("Failed to register atom %s", names[i]);
-		}
-    }
-}
-
-void x_set_net_wm_window_type(xcb_connection_t *c, xcb_window_t win, xcb_atom_t state) {
-	X_CHECKED(xcb_change_property_checked(c, XCB_PROP_MODE_REPLACE, win, ATOMS[_NET_WM_WINDOW_TYPE], XCB_ATOM_ATOM, 32, 1, &ATOMS[_NET_WM_WINDOW_TYPE_DOCK]));
-}
-
-void x_raise_window(xcb_connection_t *c, xcb_window_t win) {
-	X_CHECKED(xcb_configure_window_checked(c, win, XCB_CONFIG_WINDOW_STACK_MODE, (uint32_t[]) {XCB_STACK_MODE_ABOVE}));
-	xcb_flush(c);
-}
 
 void mb_draw() {
 	int width = mb.screen->width_in_pixels;
@@ -170,7 +88,7 @@ int main() {
 	mb.argb_visual = x_get_visual(mb.screen, 32);
 	xcb_colormap_t argb_colormap = x_get_colormap(mb.c, mb.screen, mb.argb_visual->visual_id);
 
-	x_get_atoms(mb.c, ATOM_NAMES, ATOMS, ATOM_COUNT);
+	x_init(mb.c);
 
 	mb.window = xcb_generate_id(mb.c);
 	uint32_t set_attrs = XCB_CW_BACK_PIXEL | XCB_CW_BORDER_PIXEL | XCB_CW_OVERRIDE_REDIRECT | XCB_CW_EVENT_MASK | XCB_CW_COLORMAP;
@@ -186,7 +104,7 @@ int main() {
 		mb.argb_visual->visual_id,
 		set_attrs, attrs
 	));
-	x_set_net_wm_window_type(mb.c, mb.window, ATOMS[_NET_WM_WINDOW_TYPE_DOCK]);
+	x_set_net_wm_window_type(mb.c, mb.window, _NET_WM_WINDOW_TYPE_DOCK);
 	X_CHECKED(xcb_map_window_checked(mb.c, mb.window));
 
 	mb.surface = cairo_xcb_surface_create(mb.c, mb.window, mb.argb_visual, mb.screen->width_in_pixels, 6);

@@ -9,7 +9,7 @@ else
 	CFLAGS += -O2 -DNDEBUG
 endif
 
-all: build/monsterbar
+all: build/monsterbar build/i3glow
 
 build:
 	echo $(CFLAGS)
@@ -19,6 +19,10 @@ build/%.o: src/%.c | build
 	@gcc -c $(CFLAGS) $< -o $@
 	@echo "  CC    " $<
 
-build/monsterbar: $(patsubst src/%.c,build/%.o,$(wildcard src/*.c))
+build/i3glow: build/i3glow.o build/util.o
+	@gcc $(CFLAGS) $(LDFLAGS) $^ -o $@
+	@echo "  LD    " $@
+
+build/monsterbar: build/monsterbar.o build/util.o
 	@gcc $(CFLAGS) $(LDFLAGS) $^ -o $@
 	@echo "  LD    " $@
