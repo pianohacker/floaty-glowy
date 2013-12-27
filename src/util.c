@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <limits.h>
 #include <xcb/xcb.h>
 #include <xcb/xcb_event.h>
 
@@ -87,7 +88,7 @@ void x_init(xcb_connection_t *c) {
 }
 
 char* x_get_string_property(xcb_connection_t *c, xcb_window_t win, XAtom property) {
-	xcb_get_property_reply_t *reply = xcb_get_property_reply(c, xcb_get_property_unchecked(c, 0, win, X_ATOMS[property], X_ATOMS[UTF8_STRING], 0, 0), NULL);
+	xcb_get_property_reply_t *reply = xcb_get_property_reply(c, xcb_get_property_unchecked(c, 0, win, X_ATOMS[property], X_ATOMS[UTF8_STRING], 0, PATH_MAX), NULL);
 
 	if (!reply) FG_FAIL("could not fetch property %d of window 0x%x", property, win);
 

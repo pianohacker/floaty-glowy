@@ -2,6 +2,7 @@
 #include <cairo-xcb.h>
 #include <errno.h>
 #include <i3/ipc.h>
+#include <json.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -89,22 +90,80 @@ void i3g_handle_event(xcb_generic_event_t *event) {
 }
 
 void i3g_i3_send(uint32_t type, const char *payload) {
+	struct i3_ipc_header header;
+	memcpy(header.magic, I3_IPC_MAGIC, 6);
+	header.size = strlen(payload);
+	header.type = type;
+
+	write(i3g.i3_fd, &header, sizeof(header));
+	write(i3g.i3_fd, payload, header.size);
+}
+
+void i3g_i3_init_workspaces(json_object *payload) {
+}
+
+void i3g_i3_update_workspaces(json_object *payload) {
 }
 
 void i3g_i3_recv() {
+	struct i3_ipc_header header;
+	ssize_t header_read = read(i3g.i3_fd, &header, sizeof(header));
+	if (header_read < 0) {
+		FG_FAIL_ERRNO("could not read from I3: %s");
+	} else if (header_read == 0) {
+		FG_FAIL("I3 closed socket");
+	}
+
+	if (strncmp(header.magic, I3_IPC_MAGIC, 6) != 0) FG_FAIL("invalid message from I3");
+
+	size_t bytes_read = 0;
+	char *payload = calloc(header.size + 1, 1);
+
+	while (bytes_read < header.size) {
+		ssize_t chunk_read = read(i3g.i3_fd, payload + bytes_read, header.size - bytes_read);
+
+		if (chunk_read < 0) {
+			FG_FAIL_ERRNO("could not read from I3: %s");
+		} else if (chunk_read == 0) {
+			FG_FAIL("I3 closed socket");
+		}
+
+		bytes_read += chunk_read;
+	}
+
+	json_object *payload_obj = json_tokener_parse(payload);
+
+	if (header.type & I3_IPC_EVENT_MASK) {
+		switch (header.type) {
+			case I3_IPC_EVENT_WORKSPACE:
+				i3g_i3_update_workspaces(payload_obj);
+				break;
+		}
+	} else {
+		switch (header.type) {
+			case I3_IPC_REPLY_TYPE_WORKSPACES:
+				i3g_i3_init_workspaces(payload_obj);
+				break;
+			case I3_IPC_REPLY_TYPE_SUBSCRIBE:
+				if (!json_object_get_boolean(json_object_object_get(payload_obj, "success"))) FG_FAIL("subscribe failed");
+				break;
+		}
+	}
+
+	json_object_put(payload_obj);
 }
 
-int i3g_i3_connect() {
+void i3g_i3_connect() {
 	char *sockname = x_get_string_property(i3g.c, i3g.screen->root, I3_SOCKET_PATH);
 
-	int fd = socket(AF_UNIX, SOCK_STREAM, 0);
-	if (fd < 0) FG_FAIL_ERRNO("i3 connect failed: %s");
+	i3g.i3_fd = socket(AF_UNIX, SOCK_STREAM, 0);
+	if (i3g.i3_fd < 0) FG_FAIL_ERRNO("i3 connect failed: %s");
 
 	struct sockaddr_un addr;
 	addr.sun_family = AF_UNIX;
 	strcpy(addr.sun_path, sockname);
 
-	if (connect(fd, (struct sockaddr *) &addr, sizeof(addr)) == -1) FG_FAIL_ERRNO("i3 connect failed: %s");
+	if (connect(i3g.i3_fd, (struct sockaddr *) &addr, sizeof(addr)) == -1) FG_FAIL_ERRNO("i3 connect failed: %s");
 
 	i3g_i3_send(I3_IPC_MESSAGE_TYPE_SUBSCRIBE, "[\"workspace\"]");
 	i3g_i3_recv();
