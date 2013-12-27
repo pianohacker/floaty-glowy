@@ -13,6 +13,8 @@ char *X_ATOM_NAMES[] = {
 	"_NET_WM_STATE_ABOVE",
 	"_NET_WM_WINDOW_TYPE",
 	"_NET_WM_WINDOW_TYPE_DOCK",
+	"I3_SOCKET_PATH",
+	"UTF8_STRING",
 };
 
 xcb_atom_t X_ATOMS[X_ATOM_COUNT];
@@ -82,4 +84,15 @@ void x_raise_window(xcb_connection_t *c, xcb_window_t win) {
 
 void x_init(xcb_connection_t *c) {
 	x_get_atoms(c, X_ATOM_NAMES, X_ATOMS, X_ATOM_COUNT);
+}
+
+char* x_get_string_property(xcb_connection_t *c, xcb_window_t win, XAtom property) {
+	xcb_get_property_reply_t *reply = xcb_get_property_reply(c, xcb_get_property_unchecked(c, 0, win, X_ATOMS[property], X_ATOMS[UTF8_STRING], 0, 0), NULL);
+
+	if (!reply) FG_FAIL("could not fetch property %d of window 0x%x", property, win);
+
+	char *result = strndup(xcb_get_property_value(reply), xcb_get_property_value_length(reply));
+
+	free(reply);
+	return result;
 }
