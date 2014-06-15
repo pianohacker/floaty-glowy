@@ -1,4 +1,4 @@
-CFLAGS = -Wall -std=gnu99 -D_POSIX_C_SOURCE=200809L $(shell pkg-config --cflags cairo json-c xcb xcb-util)
+CFLAGS = -Wall -std=gnu99 -D_POSIX_C_SOURCE=200809L -D_XOPEN_SOURCE=500 $(shell pkg-config --cflags cairo json-c xcb xcb-util)
 LDFLAGS = -lm $(shell pkg-config --libs cairo json-c xcb xcb-util)
 
 -include config.mk

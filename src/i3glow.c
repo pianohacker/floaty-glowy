@@ -19,15 +19,15 @@
 
 #define X_CHECKED(code) { xcb_generic_error_t *error; xcb_void_cookie_t cookie = code; if ((error = xcb_request_check(i3g.c, cookie))) FG_FAIL("X11 request at %s:%d failed with %s", __FILE__, __LINE__, xcb_event_get_error_label(error->error_code)); }
 
-#define I3G_BARHEIGHT 3
-#define I3G_WINDOWHEIGHT 6
+#define I3G_BARHEIGHT 6
+#define I3G_WINDOWHEIGHT 8
 #define I3G_INDICATORWIDTH 20
 #define I3G_INDICATORSPACE 12
+#define I3G_WS_SHOW_OFFSET 1
 
 struct {
 	struct {
 		bool seen;
-		int n_windows;
 		int mode;
 		bool active;
 		bool urgent;
@@ -51,22 +51,35 @@ void i3g_draw() {
 	cairo_paint(cr);
 	cairo_set_operator(cr, CAIRO_OPERATOR_OVER);
 
-	cairo_rectangle(cr, 0, 0, width, I3G_BARHEIGHT);
+	cairo_rectangle(cr, 0, 0, width, I3G_WINDOWHEIGHT);
 	cairo_set_source_rgba(cr, 1, 1, 1, .8);
 	cairo_fill(cr);
 
-	for (int i = 0; i < 64 && i3g.desktops[i].seen; i++) {
-		cairo_rectangle(cr, I3G_INDICATORSPACE + (I3G_INDICATORWIDTH + I3G_INDICATORSPACE) * i, 0, I3G_INDICATORWIDTH, I3G_WINDOWHEIGHT);
-		if (i3g.desktops[i].active) {
-			cairo_set_source_rgba(cr, .815, .212, .012, .9);
-		} else if (i3g.desktops[i].urgent) {
-			cairo_set_source_rgba(cr, .451, .651, .941, .9);
-		} else if (i3g.desktops[i].n_windows) {
-			cairo_set_source_rgba(cr, .3, .3, .3, .8);
-		} else {
+	for (int i = I3G_WS_SHOW_OFFSET; i < 64; i++) {
+		cairo_rectangle(cr, I3G_INDICATORSPACE + (I3G_INDICATORWIDTH + I3G_INDICATORSPACE) * (i - I3G_WS_SHOW_OFFSET), 0, I3G_INDICATORWIDTH, I3G_BARHEIGHT);
+
+		if (!i3g.desktops[i].seen) {
 			cairo_set_source_rgba(cr, 0, 0, 0, 0);
+		} else if (i3g.desktops[i].active) {
+			cairo_set_source_rgb(cr, .965, .362, .162);
+		} else if (i3g.desktops[i].urgent) {
+			cairo_set_source_rgb(cr, .551, .751, .999);
+		} else {
+			cairo_set_source_rgb(cr, .5, .5, .5);
 		}
-		cairo_fill(cr);
+		cairo_fill_preserve(cr);
+
+		if (!i3g.desktops[i].seen) {
+		} else if (i3g.desktops[i].active) {
+			cairo_set_source_rgba(cr, .865, .262, .062, .5);
+			c_offset_quads(cr, 4, 0);
+		} else if (i3g.desktops[i].urgent) {
+			cairo_set_source_rgba(cr, .501, .701, .991, .5);
+			c_offset_quads(cr, 8, 0);
+		} else {
+		}
+
+		cairo_new_path(cr);
 	}
 
 	cairo_destroy(cr);
@@ -100,9 +113,17 @@ void i3g_i3_send(uint32_t type, const char *payload) {
 }
 
 void i3g_i3_init_workspaces(json_object *payload) {
-}
+	json_object *workspace;
 
-void i3g_i3_update_workspaces(json_object *payload) {
+	for (int num = 0; num < 64; num++) i3g.desktops[num].seen = false;
+
+	for (int i = 0; (workspace = json_object_array_get_idx(payload, i)); i++) {
+		int num = json_object_get_int(json_object_object_get(workspace, "num"));
+
+		i3g.desktops[num].seen = true;
+		i3g.desktops[num].active = json_object_get_boolean(json_object_object_get(workspace, "focused"));
+		i3g.desktops[num].urgent = json_object_get_boolean(json_object_object_get(workspace, "urgent"));
+	}
 }
 
 void i3g_i3_recv() {
@@ -136,7 +157,8 @@ void i3g_i3_recv() {
 	if (header.type & I3_IPC_EVENT_MASK) {
 		switch (header.type) {
 			case I3_IPC_EVENT_WORKSPACE:
-				i3g_i3_update_workspaces(payload_obj);
+				i3g_i3_send(I3_IPC_MESSAGE_TYPE_GET_WORKSPACES, "");
+				i3g_i3_recv();
 				break;
 		}
 	} else {
@@ -189,16 +211,17 @@ int main() {
 		i3g.window,
 		i3g.screen->root,
 		0, 0,
-		i3g.screen->width_in_pixels, 6,
+		i3g.screen->width_in_pixels, I3G_WINDOWHEIGHT,
 		0,
 		XCB_WINDOW_CLASS_INPUT_OUTPUT,
 		i3g.argb_visual->visual_id,
 		set_attrs, attrs
 	));
+	x_set_net_wm_struts(i3g.c, i3g.screen, i3g.window, 0, 0, I3G_WINDOWHEIGHT, 0);
 	x_set_net_wm_window_type(i3g.c, i3g.window, _NET_WM_WINDOW_TYPE_DOCK);
 	X_CHECKED(xcb_map_window_checked(i3g.c, i3g.window));
 
-	i3g.surface = cairo_xcb_surface_create(i3g.c, i3g.window, i3g.argb_visual, i3g.screen->width_in_pixels, 6);
+	i3g.surface = cairo_xcb_surface_create(i3g.c, i3g.window, i3g.argb_visual, i3g.screen->width_in_pixels, I3G_WINDOWHEIGHT);
 
 	int xcb_fd = xcb_get_file_descriptor(i3g.c);
 	i3g_i3_connect();
